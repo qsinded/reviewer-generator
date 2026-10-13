@@ -1,5 +1,3 @@
-// Reviewer Generator application UI and interactions.
-
 const app = document.getElementById('app');
 const KEY = 'reviewer_gen_v1';
 let mem = [];
@@ -43,14 +41,16 @@ async function run() {
     let lines = [], pdfjs = null;
     for (const f of files) {
       if (/\.pdf$/i.test(f.name)) { pdfjs = loadPdfjs(); lines.push(...await pdfLines(pdfjs, await f.arrayBuffer())); }
+      else if (/\.pptx$/i.test(f.name)) lines.push(...await pptxLines(await f.arrayBuffer()));
+      else if (/\.ppt$/i.test(f.name)) throw new Error('Old .ppt files cannot be read. In PowerPoint use Save As > .pptx (or PDF), then pick that file.');
       else lines.push(...(await f.text()).split(/\r?\n/));
     }
-    if (lines.join('').length < 200) throw new Error('No readable text found. Scanned PDFs (pictures of pages) cannot be read offline.');
+    if (lines.join('').length < 200) throw new Error('No readable text found. Scanned PDFs or slides that are only pictures cannot be read offline.');
     status = 'Building items…'; home();
     const items = generate(lines);
     if (items.length < 3) throw new Error('Could not find enough definitions or lists in this file. Notes written as full sentences ("X is …") work best.');
     const title = document.getElementById('title').value.trim() || files[0].name.replace(/\.[^.]+$/, '');
-    const r = { id: Date.now(), title, items, ans: {} };
+    const r = { id: Date.now(), title, items, ans: {}, src: lines };
     R.unshift(r); save(); files = []; open(r);
   } catch (e) { err = String(e.message || e); }
   busy = false; status = ''; if (!cur) home();
@@ -61,9 +61,9 @@ function home() {
   const node = h('div', null,
     h('div', { class: 'k' }, '; Offline reviewer generator'),
     h('h1', null, 'Reviewer Generator'),
-    h('p', { class: 'sub' }, 'Pick a PDF or text file. The reviewer is built on this device, no internet needed.'),
+    h('p', { class: 'sub' }, 'Pick a PDF, PowerPoint (.pptx) or text file. The reviewer is built on this device, no internet needed.'),
     h('div', { class: 'card' },
-      h('input', { type: 'file', id: 'file', accept: '.pdf,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
+      h('input', { type: 'file', id: 'file', accept: '.pdf,.pptx,.ppt,.txt,.md,text/plain,application/pdf', multiple: '', onchange: e => { files = [...e.target.files]; home(); } }),
       h('p', { class: 'k' }, files.length ? files.length + ' file(s): ' + files.map(f => f.name).join(', ') : 'No file chosen'),
       h('input', { type: 'text', id: 'title', placeholder: 'Reviewer title (optional)', value: tv }),
       h('p', null, h('button', { class: 'btn', disabled: busy || !files.length ? '' : null, onclick: run }, busy ? 'Working…' : 'Generate reviewer')),
@@ -78,6 +78,19 @@ function home() {
 }
 
 const TABS = { mc: 'Multiple choice', id: 'Identification', enum: 'Enumeration' };
+function wipe() { for (const k in draft) delete draft[k]; }
+// Shuffle = rebuild a new question set from the saved file text (random pick, new wrong options, new order).
+// Reviewers saved before source text was kept can only reorder what they have.
+function shuffleAll() {
+  if (Object.keys(cur.ans).length && !confirm('Make a new shuffled set and reset your progress?')) return;
+  const fresh = cur.src ? generate(cur.src) : [];
+  if (fresh.length >= 3) cur.items = fresh;
+  else {
+    cur.items = shuffle(cur.items);
+    cur.items.forEach(it => { if (it.type === 'mc') { const t = it.options[it.answer]; it.options = shuffle(it.options); it.answer = it.options.indexOf(t); } });
+  }
+  cur.ans = {}; wipe(); save(); quiz(); scrollTo(0, 0);
+}
 function open(r) { cur = r; const ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k)); tab = ts[0]; quiz(); }
 
 function answer(it, val) {
@@ -90,6 +103,7 @@ function answer(it, val) {
 
 function quiz() {
   const r = cur, ts = Object.keys(TABS).filter(k => r.items.some(i => i.type === k));
+  if (!ts.includes(tab)) tab = ts[0];
   const good = x => x.filter(i => r.ans[i.id] && r.ans[i.id].ok).length;
   const total = good(r.items), n = r.items.length;
   const mine = r.items.filter(i => i.type === tab);
@@ -107,6 +121,8 @@ function quiz() {
     h('div', { class: 'row' },
       h('button', { class: 'btn', disabled: missed.length ? null : '', onclick: () => clear(missed) }, 'Retry missed (' + missed.length + ')'),
       h('button', { class: 'btn alt', onclick: () => clear(mine) }, 'Reset this part')),
+    h('div', { class: 'row', style: 'margin-top:8px' },
+      h('button', { class: 'btn alt', onclick: shuffleAll }, r.src ? 'Shuffle · new questions' : 'Shuffle')),
     mine.map((it, idx) => {
       const a = r.ans[it.id];
       return h('div', { class: 'item' },

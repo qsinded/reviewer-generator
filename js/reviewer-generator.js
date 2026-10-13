@@ -1,4 +1,3 @@
-// Rule-based reviewer generator: no AI, no network.
 // Rule-based reviewer generator: no AI, no network. Input: array of text lines.
 // ponytail: heuristics only (definitions, lists, caps-terms). Upgrade to a local LLM if quality is too low.
 function norm(s) { return String(s).toLowerCase().replace(/[^a-z0-9]/g, ''); }
@@ -70,7 +69,7 @@ function generate(rawLines) {
         seen.add(term.toLowerCase());
         const body = d[2].replace(/[.;]$/, '');
         const mask = body.replace(new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), '_____');
-        defs.push({ kind: 'def', term, q: 'Which term is described? ' + mask, src: s });
+        defs.push({ kind: 'def', term, body, q: 'Which term is described? ' + mask, src: s });
         used.add(s);
       }
     }
@@ -91,6 +90,12 @@ function generate(rawLines) {
   let nMC = 0, nID = 0;
   for (const it of all) {
     const dist = shuffle(pool[it.kind].filter(t => norm(t) !== norm(it.term))).slice(0, 3);
+    // Half the time ask a definition the other way round, so a rebuilt set is not the same questions.
+    if (it.kind === 'def' && dist.length === 3 && nMC < 30 && Math.random() < 0.5) {
+      const opts = shuffle([it.body, ...shuffle(defs.filter(d => d !== it)).slice(0, 3).map(d => d.body)]);
+      out.push({ type: 'mc', q: 'Which statement describes "' + it.term + '"?', options: opts, answer: opts.indexOf(it.body), exp: it.src });
+      nMC++; continue;
+    }
     if (dist.length === 3 && nMC < 30 && (nMC <= nID * 1.5 || nID >= 20)) {
       const opts = shuffle([it.term, ...dist]);
       out.push({ type: 'mc', q: it.q, options: opts, answer: opts.indexOf(it.term), exp: it.src });
